@@ -3,6 +3,7 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { DB } from "./db";
 import { page } from "./page";
 import { hashPassword, verifyPassword, DUMMY_HASH } from "./hash";
+import { rateLimited, noteAttempt, clearAttempts } from "./limit";
 import { mintSession, readSession, dropSession } from "./session";
 
 type User = { id: number; email: string; pw_hash: string };
@@ -26,9 +27,15 @@ export function makeApp(db: DB) {
 
   app.post("/api/login", async c => {
     const { email, password } = await c.req.json();
+    const ip = c.req.header("x-forwarded-for") ?? "local";
+    if (rateLimited(db, email, ip)) return c.json({ error: "too many attempts, try again later" }, 429);
     const u = db.prepare("SELECT id, email, pw_hash FROM users WHERE email = ?").get(email) as User | undefined;
     const ok = await verifyPassword(u ? u.pw_hash : DUMMY_HASH, password);
-    if (!u || !ok) return c.json({ error: "invalid email or password" }, 401);
+    if (!u || !ok) {
+      noteAttempt(db, email, ip);
+      return c.json({ error: "invalid email or password" }, 401);
+    }
+    clearAttempts(db, email, ip);
     setCookie(c, "sid", mintSession(db, u.id), { httpOnly: true, sameSite: "Lax", path: "/" });
     return c.json({ ok: true });
   });
