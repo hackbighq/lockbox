@@ -1,20 +1,23 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import type { DB } from "./db";
 
-// v0: a stateless signed token. The DB never learns the session exists,
-// so logout can only clear the cookie in the browser, not kill the session.
-const SECRET = "dev-secret-change-me";
-const sign = (body: string) => createHash("sha256").update(body + SECRET).digest("hex").slice(0, 16);
+// Server-side sessions: the cookie is a random token; the DB holds only sha256(token).
+// Logout deletes the row, so a copied cookie dies the moment you log out.
+const DAY = 24 * 60 * 60 * 1000;
+const sha = (s: string) => createHash("sha256").update(s).digest("hex");
 
-export function mintSession(_db: DB, userId: number): string {
-  const body = String(userId);
-  return body + "." + sign(body);
+export function mintSession(db: DB, userId: number): string {
+  const token = randomBytes(32).toString("hex");
+  db.prepare("INSERT INTO sessions (id_hash, user_id, expires_at) VALUES (?, ?, ?)")
+    .run(sha(token), userId, Date.now() + 7 * DAY);
+  return token;
 }
-export function readSession(_db: DB, token?: string): number | null {
+export function readSession(db: DB, token?: string): number | null {
   if (!token) return null;
-  const [body, sig] = token.split(".");
-  return sig === sign(body) ? Number(body) : null;
+  const row = db.prepare("SELECT user_id, expires_at FROM sessions WHERE id_hash = ?").get(sha(token)) as any;
+  if (!row || row.expires_at < Date.now()) return null;
+  return row.user_id;
 }
-export function dropSession(_db: DB, _token?: string): void {
-  // v0: nothing is stored server-side, so there is nothing to delete.
+export function dropSession(db: DB, token?: string): void {
+  if (token) db.prepare("DELETE FROM sessions WHERE id_hash = ?").run(sha(token));
 }
