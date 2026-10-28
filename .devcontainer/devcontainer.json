@@ -1,0 +1,7 @@
+{
+  "name": "Lockbox",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:22",
+  "postCreateCommand": "npm ci && npm run seed",
+  "forwardPorts": [8787],
+  "portsAttributes": { "8787": { "label": "Lockbox", "onAutoForward": "openPreview" } }
+}
